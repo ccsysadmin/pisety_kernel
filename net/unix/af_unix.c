@@ -497,7 +497,7 @@ static void unix_sock_destructor(struct sock *sk)
 	WARN_ON(!sk_unhashed(sk));
 	WARN_ON(sk->sk_socket);
 	if (!sock_flag(sk, SOCK_DEAD)) {
-		#ifdef CONFIG_MTK_NET_LOGGING 
+		#ifdef CONFIG_MTK_NET_LOGGING
 		printk(KERN_INFO "[mtk_net][unix]Attempt to release alive unix socket: %p\n", sk);
 		#endif
 		return;
@@ -635,7 +635,7 @@ out_unlock:
 	unix_state_unlock(sk);
 	put_pid(old_pid);
 out:
-   
+
 	return err;
 }
 
@@ -1001,6 +1001,7 @@ static int unix_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	unsigned int hash;
 	struct unix_address *addr;
 	struct hlist_head *list;
+	struct path path = { NULL, NULL };
 
 	err = -EINVAL;
 	if (sunaddr->sun_family != AF_UNIX)
@@ -1016,9 +1017,20 @@ static int unix_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 		goto out;
 	addr_len = err;
 
+	if (sun_path[0]) {
+		umode_t mode = S_IFSOCK |
+		       (SOCK_INODE(sock)->i_mode & ~current_umask());
+		err = unix_mknod(sun_path, mode, &path);
+		if (err) {
+			if (err == -EEXIST)
+				err = -EADDRINUSE;
+			goto out;
+		}
+	}
+
 	err = mutex_lock_interruptible(&u->readlock);
 	if (err)
-		goto out;
+		goto out_put;
 
 	err = -EINVAL;
 	if (u->addr)
@@ -1035,17 +1047,6 @@ static int unix_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	atomic_set(&addr->refcnt, 1);
 
 	if (sun_path[0]) {
-		struct path path;      
-
-		umode_t mode = S_IFSOCK |
-		       (SOCK_INODE(sock)->i_mode & ~current_umask());
-		err = unix_mknod(sun_path, mode, &path);
-		if (err) {
-			if (err == -EEXIST)
-				err = -EADDRINUSE;
-			unix_release_addr(addr);
-			goto out_up;
-		}
 		addr->hash = UNIX_HASH_SIZE;
 		hash = path.dentry->d_inode->i_ino & (UNIX_HASH_SIZE-1);
 		spin_lock(&unix_table_lock);
@@ -1072,8 +1073,11 @@ out_unlock:
 	spin_unlock(&unix_table_lock);
 out_up:
 	mutex_unlock(&u->readlock);
+out_put:
+	if (err)
+		path_put(&path);
 out:
- 
+
 	return err;
 }
 
@@ -1113,7 +1117,7 @@ static int unix_dgram_connect(struct socket *sock, struct sockaddr *addr,
 	int err;
 
 	if (addr->sa_family != AF_UNSPEC) {
-     
+
 		err = unix_mkname(sunaddr, alen, &hash);
 		if (err < 0)
 			goto out;
@@ -1170,21 +1174,21 @@ restart:
 		unix_peer(sk) = other;
 		unix_state_double_unlock(sk, other);
 	}
-	
-#ifdef CONFIG_MTK_NET_LOGGING 
+
+#ifdef CONFIG_MTK_NET_LOGGING
     if((SOCK_INODE(sock)!= NULL) && (sunaddr != NULL) && (other->sk_socket != NULL) && (SOCK_INODE(other->sk_socket) != NULL))
     {
 	       printk(KERN_INFO "[mtk_net][socket]unix_dgram_connect[%lu]:connect [%s] other[%lu]\n",SOCK_INODE(sock)->i_ino,sunaddr->sun_path,SOCK_INODE(other->sk_socket)->i_ino);
 	  }
-#endif 
-            
+#endif
+
 	return 0;
 
 out_unlock:
 	unix_state_double_unlock(sk, other);
 	sock_put(other);
 out:
-     
+
 	return err;
 }
 
@@ -1367,17 +1371,17 @@ restart:
 	__skb_queue_tail(&other->sk_receive_queue, skb);
 	spin_unlock(&other->sk_receive_queue.lock);
 	unix_state_unlock(other);
-	
-	#ifdef CONFIG_MTK_NET_LOGGING 
+
+	#ifdef CONFIG_MTK_NET_LOGGING
 	if((SOCK_INODE(sock)!= NULL) && (sunaddr != NULL) && (other->sk_socket != NULL) && (SOCK_INODE(other->sk_socket) != NULL))
   {
 	  printk(KERN_INFO "[mtk_net][socket]unix_stream_connect[%lu ]: connect [%s] other[%lu] \n",SOCK_INODE(sock)->i_ino,sunaddr->sun_path,SOCK_INODE(other->sk_socket)->i_ino);
 	}
-  #endif 
+  #endif
 
 	other->sk_data_ready(other, 0);
 	sock_put(other);
-       
+
 	return 0;
 
 out_unlock:
@@ -1390,7 +1394,7 @@ out:
 		unix_release_sock(newsk, 0);
 	if (other)
 		sock_put(other);
-    
+
 	return err;
 }
 
@@ -1442,7 +1446,7 @@ static int unix_accept(struct socket *sock, struct socket *newsock, int flags)
 	/* If socket state is TCP_LISTEN it cannot change (for now...),
 	 * so that no locks are necessary.
 	 */
-    
+
 	skb = skb_recv_datagram(sk, 0, flags&O_NONBLOCK, &err);
 	if (!skb) {
 		/* This means receive shutdown. */
@@ -1461,11 +1465,11 @@ static int unix_accept(struct socket *sock, struct socket *newsock, int flags)
 	unix_sock_inherit_flags(sock, newsock);
 	sock_graft(tsk, newsock);
 	unix_state_unlock(tsk);
-    
+
 	return 0;
 
 out:
-    
+
 	return err;
 }
 
@@ -1804,7 +1808,7 @@ restart_locked:
 	other->sk_data_ready(other, len);
 	sock_put(other);
 	scm_destroy(siocb->scm);
-    
+
 	return len;
 
 out_unlock:
@@ -1817,7 +1821,7 @@ out:
 	if (other)
 		sock_put(other);
 	scm_destroy(siocb->scm);
-      
+
 	return err;
 }
 
@@ -1837,7 +1841,7 @@ static int unix_stream_sendmsg(struct kiocb *kiocb, struct socket *sock,
 
 	if (NULL == siocb->scm)
 		siocb->scm = &tmp_scm;
-		
+
 	wait_for_unix_gc();
 	err = scm_send(sock, msg, siocb->scm, false);
 	if (err < 0)
@@ -1881,7 +1885,7 @@ static int unix_stream_sendmsg(struct kiocb *kiocb, struct socket *sock,
 
 		skb = sock_alloc_send_skb(sk, size, msg->msg_flags&MSG_DONTWAIT,
 					  &err);
-		
+
 
 		if (skb == NULL)
 			goto out_err;
@@ -1920,26 +1924,26 @@ static int unix_stream_sendmsg(struct kiocb *kiocb, struct socket *sock,
                     {
                         if(sk->sk_socket)
                         {
-                
-                         #ifdef CONFIG_MTK_NET_LOGGING 
+
+                         #ifdef CONFIG_MTK_NET_LOGGING
                          printk(KERN_INFO " [mtk_net][unix]: sendmsg[%lu:%lu]:peer close\n" ,SOCK_INODE(sk->sk_socket)->i_ino,SOCK_INODE(other->sk_socket)->i_ino);
 				         #endif
 		         }
 		         else{
-				   	    #ifdef CONFIG_MTK_NET_LOGGING 
+				   	    #ifdef CONFIG_MTK_NET_LOGGING
 				        printk(KERN_INFO " [mtk_net][unix]: sendmsg[null:%lu]:peer close\n" ,SOCK_INODE(other->sk_socket)->i_ino);
 				        #endif
-		         }        
+		         }
 
 		    }
-		    else	
+		    else
 					{
-						#ifdef CONFIG_MTK_NET_LOGGING 	
+						#ifdef CONFIG_MTK_NET_LOGGING
 				        printk(KERN_INFO " [mtk_net][unix]: sendmsg:peer close \n" );
 				        #endif
 				}
-		   		
-          
+
+
 			goto pipe_err_free;
 		}
 
@@ -1967,7 +1971,7 @@ pipe_err:
 out_err:
 	scm_destroy(siocb->scm);
 	siocb->scm = NULL;
-        
+
 	return sent ? : err;
 }
 
@@ -2109,7 +2113,7 @@ out_free:
 out_unlock:
 	mutex_unlock(&u->readlock);
 out:
-      
+
 	return err;
 }
 
@@ -2215,18 +2219,18 @@ again:
                             if(sk && sk->sk_socket )
                             {
 				   if(other && other->sk_socket ){
-				   	#ifdef CONFIG_MTK_NET_LOGGING 
-				   	
+				   	#ifdef CONFIG_MTK_NET_LOGGING
+
                      printk(KERN_INFO " [mtk_net][unix]: recvmsg[%lu:%lu]:exit read due to peer shutdown  \n" ,SOCK_INODE(sk->sk_socket)->i_ino,SOCK_INODE(other->sk_socket)->i_ino);
 				   #endif
-				   }else{				   
-				   	#ifdef CONFIG_MTK_NET_LOGGING 				   
+				   }else{
+				   	#ifdef CONFIG_MTK_NET_LOGGING
                      printk(KERN_INFO "[mtk_net][unix]: recvmsg[%lu:null]:exit read due to peer shutdown  \n" ,SOCK_INODE(sk->sk_socket)->i_ino);
                      #endif
 				   }
 				 }
-			    else{	
-					#ifdef CONFIG_MTK_NET_LOGGING 
+			    else{
+					#ifdef CONFIG_MTK_NET_LOGGING
 				   printk(KERN_INFO " [mtk_net][unix]: recvmsg: exit read due to peer shutdown \n" );
 				   #endif
 			    }
@@ -2244,22 +2248,22 @@ again:
                             if(sk && sk->sk_socket )
                             {
                                 if(other && other->sk_socket ){
-				   	#ifdef CONFIG_MTK_NET_LOGGING 
+				   	#ifdef CONFIG_MTK_NET_LOGGING
                      printk(KERN_INFO " [mtk_net][unix]: recvmsg[%lu:%lu]:exit read due to timeout  \n" ,SOCK_INODE(sk->sk_socket)->i_ino,SOCK_INODE(other->sk_socket)->i_ino);
 				   #endif
-				   }else{				   
-				   	#ifdef CONFIG_MTK_NET_LOGGING 				   
+				   }else{
+				   	#ifdef CONFIG_MTK_NET_LOGGING
                      printk(KERN_INFO " [mtk_net][unix]: recvmsg[%lu:null]:exit read due to timeout  \n" ,SOCK_INODE(sk->sk_socket)->i_ino);
                      #endif
-				    }			  
+				    }
 		           }
-			   else	
+			   else
 					{
-						#ifdef CONFIG_MTK_NET_LOGGING 	
+						#ifdef CONFIG_MTK_NET_LOGGING
 				  printk(KERN_INFO " [mtk_net][unix]: recvmsg:exit read due to timeout \n" );
 				  #endif
 				}
-		   		  
+
 			 }
 
 			if (signal_pending(current)) {
@@ -2356,7 +2360,7 @@ again:
 	mutex_unlock(&u->readlock);
 	scm_recv(sock, msg, siocb->scm, flags);
 out:
-  
+
 	return copied ? : err;
 }
 
@@ -2526,14 +2530,14 @@ static unsigned int unix_dgram_poll(struct file *file, struct socket *sock,
 		/* connection hasn't started yet? */
 		if (sk->sk_state == TCP_SYN_SENT)
     {
-        
+
 			return mask;
 	  }
   }
 
 	/* No write status requested, avoid expensive OUT tests. */
 	if (!(poll_requested_events(wait) & (POLLWRBAND|POLLWRNORM|POLLOUT)))
-  {     
+  {
 		return mask;
   }
 
